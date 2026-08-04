@@ -86,16 +86,25 @@ Este documento se actualiza al cierre de cada incidente relevante, en paralelo a
 
 ---
 
-### Incidente #005 – [En progreso] 502 Bad Gateway con Nginx como reverse proxy
+### Incidente #005 – 502 Bad Gateway con Nginx como reverse proxy
 
 - **Fase**: v0.3 — Servicios (Nginx)
-- **Categoría**: 🔴 Red / 🟡 Configuración
-- **Síntoma**: _(pendiente — se documentará al provocar y resolver el incidente)_
-- **Diagnóstico**: _(pendiente)_
-- **Causa raíz**: _(pendiente)_
-- **Solución aplicada**: _(pendiente)_
-- **Prevención**: _(pendiente)_
-- **Tiempo estimado de resolución**: _(pendiente)_
+- **Categoría**: 🔴 Red / 🟢 Despliegue
+- **Síntoma**: `curl http://localhost:80/health` devuelve `HTTP/1.1 502 Bad Gateway` (página de error generada por Nginx, `Server: nginx/1.24.0`).
+- **Diagnóstico**:
+  - Comandos usados: `nc -vz 127.0.0.1 80`, `ss -tlnp | grep ":80"`, `sudo tail -n 20 /var/log/nginx/error.log`, `ss -tlnp | grep ":8000"`, `sudo systemctl status devops-journey`
+  - Evidencia clave:
+    1. `nc -vz 127.0.0.1 80` → `succeeded` y `ss -tlnp` confirmaron Nginx sano, escuchando y aceptando conexiones — descartando problema de red hacia el proxy.
+    2. `error.log` de Nginx mostró el mensaje exacto: `connect() failed (111: Connection refused) while connecting to upstream ... upstream: "http://127.0.0.1:8000/health"` — código `111` = `ECONNREFUSED` a nivel de sistema operativo.
+    3. `ss -tlnp | grep ":8000"` no devolvió resultados — ningún proceso escuchando en el puerto del backend.
+    4. `systemctl status devops-journey` confirmó `inactive (dead)`, proceso detenido con `signal=TERM`.
+- **Causa raíz**: El servicio backend (Uvicorn/FastAPI) estaba detenido. Nginx funcionaba correctamente como proxy, pero al no poder establecer conexión TCP con su upstream, generó y devolvió un 502 al cliente por su propia cuenta.
+- **Solución aplicada**:
+  - Cambio realizado: `sudo systemctl start devops-journey`
+  - Comando de verificación: `curl http://localhost:80/health` → `200 OK`, `{"status":"healthy"}`
+- **Prevención**: Configurar `Restart=on-failure` en el `.service` (ya implementado desde Fase 2) reduce el riesgo de que el backend quede caído por un crash; para detenciones manuales/deploys, considerar un healthcheck que alerte si el backend no responde antes de que un usuario lo note.
+- **Aprendizaje clave**: Un 502 siempre lo genera la capa intermedia (proxy/gateway), nunca el backend — el backend ni siquiera llega a enterarse de la petición. El término técnico que usa Nginx para el backend es "upstream", y el código de sistema `111` corresponde exactamente a `ECONNREFUSED`, el mismo error ya visto en incidentes anteriores, ahora observado desde la perspectiva de Nginx actuando como cliente.
+- **Tiempo estimado de resolución**: 15 minutos
 
 ---
 
@@ -115,7 +124,7 @@ Banco de incidentes a provocar en fases próximas — no son un calendario fijo,
 
 | Categoría | Incidentes resueltos | Tiempo promedio |
 |---|---|---|
-| 🔴 Red | 2 | ~7 min |
+| 🔴 Red | 3 | ~9 min |
 | 🟡 Configuración | 3 | ~12 min |
-| 🟢 Despliegue | 1 | 10 min |
+| 🟢 Despliegue | 2 | ~12 min |
 | 🔵 Recursos | 0 | — |
