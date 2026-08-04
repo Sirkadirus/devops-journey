@@ -3,7 +3,7 @@
 > Un laboratorio DevOps evolutivo: una única aplicación mínima que crece, capa por capa, desde `localhost` hasta un despliegue completo en AWS con CI/CD.
 
 [![Status](https://img.shields.io/badge/status-en%20progreso-yellow)]()
-[![Fase actual](https://img.shields.io/badge/fase-1%20Networking-blue)]()
+[![Fase actual](https://img.shields.io/badge/fase-3%20Servicios-blue)]()
 
 ---
 
@@ -21,15 +21,15 @@ Cliente → HTTP → TCP → IP → Linux → Docker → Nginx → FastAPI → P
 
 La mayoría de los portafolios Junior muestran una tecnología aislada ("hice un contenedor Docker", "desplegué en AWS"). Este proyecto busca demostrar algo distinto: **la capacidad de operar y diagnosticar un sistema completo de punta a punta**, que es lo que realmente se evalúa en una entrevista y en el día a día del puesto.
 
-Cada incidente que aparece en `docs/incidents/` fue provocado a propósito y resuelto usando herramientas reales de diagnóstico (`curl`, `ss`, `dig`, `journalctl`, `docker logs`, etc.), no simulado en abstracto.
+Cada incidente resuelto queda documentado en [`runbook.md`](./runbook.md) siguiendo un formato operativo estándar (síntoma → diagnóstico → causa raíz → solución → prevención), usando siempre herramientas reales de diagnóstico (`curl -v`, `ss`, `dig`, `ps`, `journalctl`, `nginx -t`, etc.), nunca simulado en abstracto.
 
 ## Roadmap y estado actual
 
 | Fase | Contenido | Estado |
 |---|---|---|
 | 1 — Networking | OSI, HTTP, TCP, DNS, TLS | ✅ Completa (`v0.1.1`) |
-| 2 — Linux Administration | Usuarios, permisos, procesos, systemd | ⏳ En progreso |
-| 3 — Servicios | Nginx, PostgreSQL, systemd | 🔜 Pendiente |
+| 2 — Linux Administration | Procesos, permisos, sistema de archivos, systemd/journalctl | ✅ Completa (`v0.2`) |
+| 3 — Servicios | Nginx (reverse proxy) ✅ implementado · PostgreSQL 🔜 pendiente | ⏳ En progreso |
 | 4 — Contenedores | Docker, Docker Compose | 🔜 Pendiente |
 | 5 — Cloud | AWS (EC2, IAM, VPC, S3) | 🔜 Pendiente |
 | 6 — Automatización | Git avanzado, GitHub Actions, CI/CD | 🔜 Pendiente |
@@ -39,7 +39,8 @@ Documentación detallada de cada fase en [`docs/`](./docs).
 ## Stack
 
 - **Aplicación:** Python 3 + FastAPI + Uvicorn
-- **Infraestructura (progresiva):** Docker, Nginx, PostgreSQL, AWS, GitHub Actions
+- **Infraestructura implementada:** systemd (servicio gestionado, con reinicio automático), Nginx (reverse proxy)
+- **Infraestructura pendiente:** PostgreSQL, Docker, Docker Compose, AWS, GitHub Actions
 
 ## Cómo correrlo localmente
 
@@ -49,12 +50,32 @@ cd devops-journey
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+```
+
+**Opción A — manual (desarrollo):**
+```bash
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+**Opción B — como servicio systemd (recomendado, ver `infra/systemd/`):**
+```bash
+sudo cp infra/systemd/devops-journey.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now devops-journey
+```
+
+**Nginx como reverse proxy** (config de referencia en `infra/nginx/`):
+```bash
+sudo cp infra/nginx/devops-journey.conf /etc/nginx/sites-available/
+sudo ln -s /etc/nginx/sites-available/devops-journey.conf /etc/nginx/sites-enabled/
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t && sudo systemctl reload nginx
 ```
 
 Verificar:
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:8000/health   # directo a la app
+curl http://localhost:80/health     # a través de Nginx — fijate el header "Server" en curl -v
 # {"status":"healthy"}
 ```
 
@@ -62,18 +83,37 @@ curl http://localhost:8000/health
 
 ```
 devops-journey/
-├── app/                  # Código de la aplicación FastAPI
-├── docs/                 # Documentación técnica por fase
-│   └── incidents/        # Bitácora de incidentes provocados y resueltos
+├── app/                        # Código de la aplicación FastAPI
+│   ├── __init__.py
+│   └── main.py
+├── scripts/
+│   └── start.sh                # Arranque manual, auto-posicionado en su directorio raíz
+├── infra/
+│   ├── systemd/
+│   │   └── devops-journey.service   # Copia de referencia del unit file real
+│   └── nginx/
+│       └── devops-journey.conf      # Copia de referencia de la config real de Nginx
+├── docs/                       # Documentación técnica por fase (teoría + implementación + diagnóstico)
+│   ├── fase-1-networking.md
+│   └── fase-2-linux-administration.md
+├── runbook.md                  # Incidentes resueltos en formato operativo estándar
 ├── requirements.txt
 └── README.md
 ```
 
-> Nota: la estructura crece fase por fase. Carpetas como `nginx/`, `docker/`, `infra/` o `.github/workflows/` se agregan únicamente cuando la fase correspondiente las necesita — ver el [documento rector del proyecto](./docs/) para el mapa completo de destino.
+> Nota: la estructura crece fase por fase. Carpetas como `docker/`, `.github/workflows/` se agregan únicamente cuando la fase correspondiente las necesita.
 
 ## Metodología
 
 Cada módulo del roadmap sigue el mismo formato: teoría mínima → implementación → diagnóstico → incidente simulado → documentación. El detalle completo está en `docs/`.
+
+## Incidentes resueltos (destacados)
+
+Ver el listado completo en [`runbook.md`](./runbook.md). Algunos ejemplos:
+
+- **Connection Refused** — diagnóstico de la diferencia entre rechazo activo del kernel (RST) y timeout de red real.
+- **Bind a `127.0.0.1` en lugar de `0.0.0.0`** — causa raíz más común de fallos de conectividad al introducir un reverse proxy.
+- **Cambio de configuración de systemd no aplicado** — por qué `daemon-reload` y `restart` son pasos independientes y obligatorios en ese orden.
 
 ## Convenciones
 
