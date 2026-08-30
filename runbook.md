@@ -11,7 +11,8 @@ Este documento se actualiza al cierre de cada incidente relevante, en paralelo a
 - 🔴 **Red** — DNS, TCP, puertos, conectividad
 - 🟡 **Configuración** — archivos de config no aplicados o incorrectos
 - 🟢 **Despliegue** — systemd, procesos, ciclo de vida de servicios
-- 🔵 **Recursos** — memoria, disco, CPU (pendiente de incidentes)
+- 🔵 **Seguridad** — identidad, autenticación, permisos
+- 🟣 **Recursos** — memoria, disco, CPU (pendiente de incidentes)
 
 ---
 
@@ -27,7 +28,7 @@ Este documento se actualiza al cierre de cada incidente relevante, en paralelo a
 - **Solución aplicada**:
   - Cambio realizado: se reinició el servicio manualmente (`uvicorn app.main:app --host 0.0.0.0 --port 8000`).
   - Comando de verificación: `curl http://localhost:8000/health` → `200 OK`
-- **Prevención**: Gestionar el proceso vía systemd con `Restart=on-failure` (ver Incidente #003) en lugar de ejecución manual en terminal.
+- **Prevención**: Gestionar el proceso vía systemd con `Restart=on-failure` (ver Incidente #004) en lugar de ejecución manual en terminal.
 - **Aprendizaje clave**: `Connection refused` ≠ fallo de red/TCP. Es la respuesta correcta y esperada del kernel cuando no hay proceso escuchando. Diferenciar de `Connection timed out`, que sí sugiere problema de red/firewall.
 - **Tiempo estimado de resolución**: 5 minutos
 
@@ -46,7 +47,7 @@ Este documento se actualiza al cierre de cada incidente relevante, en paralelo a
   - Cambio realizado: se agregó explícitamente `--host 0.0.0.0` al comando de arranque.
   - Comando de verificación: `ss -tulnp | grep ":8000"` → confirma `0.0.0.0:8000`
 - **Prevención**: Definir el host explícitamente en el `ExecStart` del `.service` (ver `infra/systemd/`), nunca depender del valor por defecto.
-- **Aprendizaje clave**: Esta es la causa más común de `502 Bad Gateway` una vez que se introduce un reverse proxy o contenedores: el backend "funciona" pero solo escucha internamente, invisible para quien lo consulta desde afuera.
+- **Aprendizaje clave**: Esta es la causa más común de `502 Bad Gateway` una vez que se introduce un reverse proxy o contenedores: el backend "funciona" pero solo escucha internamente, invisible para quien lo consulta desde afuera. El mismo patrón reapareció en el Incidente #006 con PostgreSQL.
 - **Tiempo estimado de resolución**: 10 minutos
 
 ---
@@ -108,13 +109,43 @@ Este documento se actualiza al cierre de cada incidente relevante, en paralelo a
 
 ---
 
+### Incidente #006 – Contenedor no puede conectar a PostgreSQL del host (3 causas encadenadas)
+
+- **Fase**: v0.4 — Contenedores (Docker)
+- **Categoría**: 🟡 Configuración / 🔴 Red / 🔵 Seguridad (identidad/autenticación)
+- **Síntoma**: `curl http://localhost:8001/db-check` contra el contenedor devuelve `500 Internal Server Error`, con distintos mensajes en cada etapa del diagnóstico.
+- **Diagnóstico y causas (en cadena, resueltas una por una):**
+
+  **Causa 1 — `DATABASE_URL` llega como `None`:**
+  - Evidencia: `docker logs devops-journey-app` mostró traceback completo terminando en `sqlalchemy.exc.ArgumentError: Expected string or URL object, got None`.
+  - Origen: `.env` fue correctamente excluido del contexto de build vía `.dockerignore` (buena práctica de seguridad), pero eso significa que no existe dentro del contenedor — `load_dotenv()` no encuentra nada que cargar.
+  - Fix: inyectar la variable en runtime con `docker run -e DATABASE_URL=...`, no dentro de la imagen.
+
+  **Causa 2 — `Connection refused` hacia `host.docker.internal`:**
+  - Evidencia: `psycopg2.OperationalError: connection ... (172.17.0.1), port 5432 failed: Connection refused`.
+  - Origen: cada contenedor tiene su propio network namespace; `127.0.0.1` dentro del contenedor no apunta al host. `host.docker.internal` resuelve correctamente al host, pero PostgreSQL solo escuchaba en `127.0.0.1` (confirmado con `ss -tlnp | grep 5432`), invisible desde la interfaz bridge de Docker (`172.17.0.1`).
+  - Fix: `listen_addresses = '*'` en `postgresql.conf` + `sudo systemctl restart postgresql@16-main`.
+
+  **Causa 3 — `no pg_hba.conf entry for host "172.17.0.2"`:**
+  - Evidencia: Postgres rechazó explícitamente indicando host de origen, usuario y base de datos que no coincidían con ninguna regla.
+  - Origen doble: faltaba una regla de autorización para el rango de red de Docker en `pg_hba.conf`, y además la connection string usaba un usuario con typo (`devops_j` en vez de `devops_app`, que no existe como rol).
+  - Fix: regla `host devops_journey devops_app 172.17.0.0/16 scram-sha-256` en `pg_hba.conf` + corrección del usuario en `DATABASE_URL`.
+
+- **Causa raíz consolidada**: la combinación de (a) separación correcta pero incompleta entre imagen y configuración runtime, (b) PostgreSQL configurado por defecto para aceptar únicamente conexiones locales, y (c) un error de tipeo en el usuario de la connection string.
+- **Solución aplicada**: variable de entorno inyectada vía `-e`, `listen_addresses = '*'`, regla en `pg_hba.conf` para la red bridge de Docker, y corrección del usuario en `DATABASE_URL`.
+- **Comando de verificación**: `curl -i http://localhost:8001/db-check` → `200 OK`, `{"database":"connected"}`
+- **Prevención**: documentar en `.env.example` el uso de `host.docker.internal` para desarrollo local con Docker; en Fase 5 (Docker Compose), Postgres pasará a ser otro contenedor en la misma red definida por Compose, eliminando la necesidad de `host.docker.internal` y de abrir Postgres a toda la red bridge.
+- **Aprendizaje clave**: un incidente real rara vez tiene una sola causa. Diagnosticar de abajo hacia arriba (¿llega la variable? → ¿hay red? → ¿hay autorización?) evita "arreglar" una capa superior mientras la inferior sigue rota, lo cual habría hecho parecer que la corrección no funcionaba.
+- **Tiempo estimado de resolución**: 40 minutos
+
+---
+
 ## Pendientes de catálogo (para incidentes futuros, por fase)
 
 Banco de incidentes a provocar en fases próximas — no son un calendario fijo, se resuelven en el orden natural en que la infraestructura los haga relevantes:
 
-- **Fase 3 (Nginx):** 504 Gateway Timeout, rotación de logs con `logrotate`
-- **Fase 4 (Docker):** `ImagePullBackOff`-equivalente (tag incorrecto), OOMKill (límite de memoria), conflicto de puertos, 502 por red interna de Docker mal configurada
-- **Fase 5 (PostgreSQL/Compose):** migración fallida (`relation already exists`), variable `DB_HOST` incorrecta, healthcheck mal calibrado
+- **Fase 4 (Docker, continuación):** OOMKill (límite de memoria), conflicto de puertos, tag de imagen incorrecto
+- **Fase 5 (PostgreSQL/Compose):** 502 por red interna de Docker Compose mal configurada, migración fallida (`relation already exists`), healthcheck mal calibrado
 - **Fase 6 (CI/CD):** build fallido por dependencia rota, deploy que no actualiza por uso de tag `latest`
 - **Fase 7 (AWS):** disco lleno en EC2, Security Group bloqueando tráfico, certificado TLS expirado, CPU throttling en instancia tipo burst
 
@@ -124,7 +155,8 @@ Banco de incidentes a provocar en fases próximas — no son un calendario fijo,
 
 | Categoría | Incidentes resueltos | Tiempo promedio |
 |---|---|---|
-| 🔴 Red | 3 | ~9 min |
-| 🟡 Configuración | 3 | ~12 min |
+| 🔴 Red | 4 | ~12 min |
+| 🟡 Configuración | 4 | ~19 min |
 | 🟢 Despliegue | 2 | ~12 min |
-| 🔵 Recursos | 0 | — |
+| 🔵 Seguridad | 1 | 40 min (compartido con Red/Config en #006) |
+| 🟣 Recursos | 0 | — |
