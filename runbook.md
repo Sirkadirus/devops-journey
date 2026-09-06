@@ -4,6 +4,8 @@ Colección de incidentes provocados y resueltos durante la construcción del pro
 
 Este documento se actualiza al cierre de cada incidente relevante, en paralelo a las bitácoras de fase (`docs/fase-N-*.md`), que documentan el *aprendizaje*. Este archivo documenta la *operación*: qué hacer si el síntoma vuelve a aparecer.
 
+**Nota de credenciales:** a partir del incidente #007, el usuario/base de PostgreSQL usado en ejercicios y en `docker-compose.yml` es `devops_j` / `devops_journey` (antes `devops_app`, usado en incidentes #006 y anteriores contra el Postgres del host).
+
 ---
 
 ## Categorías
@@ -128,15 +130,33 @@ Este documento se actualiza al cierre de cada incidente relevante, en paralelo a
 
   **Causa 3 — `no pg_hba.conf entry for host "172.17.0.2"`:**
   - Evidencia: Postgres rechazó explícitamente indicando host de origen, usuario y base de datos que no coincidían con ninguna regla.
-  - Origen doble: faltaba una regla de autorización para el rango de red de Docker en `pg_hba.conf`, y además la connection string usaba un usuario con typo (`devops_j` en vez de `devops_app`, que no existe como rol).
+  - Origen doble: faltaba una regla de autorización para el rango de red de Docker en `pg_hba.conf`, y además la connection string usaba un usuario con typo (`devops_j` en vez de `devops_app`, que no existía como rol en ese momento).
   - Fix: regla `host devops_journey devops_app 172.17.0.0/16 scram-sha-256` en `pg_hba.conf` + corrección del usuario en `DATABASE_URL`.
 
 - **Causa raíz consolidada**: la combinación de (a) separación correcta pero incompleta entre imagen y configuración runtime, (b) PostgreSQL configurado por defecto para aceptar únicamente conexiones locales, y (c) un error de tipeo en el usuario de la connection string.
 - **Solución aplicada**: variable de entorno inyectada vía `-e`, `listen_addresses = '*'`, regla en `pg_hba.conf` para la red bridge de Docker, y corrección del usuario en `DATABASE_URL`.
 - **Comando de verificación**: `curl -i http://localhost:8001/db-check` → `200 OK`, `{"database":"connected"}`
-- **Prevención**: documentar en `.env.example` el uso de `host.docker.internal` para desarrollo local con Docker; en Fase 5 (Docker Compose), Postgres pasará a ser otro contenedor en la misma red definida por Compose, eliminando la necesidad de `host.docker.internal` y de abrir Postgres a toda la red bridge.
+- **Prevención**: documentar en `.env.example` el uso de `host.docker.internal` para desarrollo local con Docker; en Docker Compose (Incidente #007), Postgres pasó a ser otro contenedor en la misma red, eliminando la necesidad de `host.docker.internal` y de abrir Postgres a toda la red bridge.
 - **Aprendizaje clave**: un incidente real rara vez tiene una sola causa. Diagnosticar de abajo hacia arriba (¿llega la variable? → ¿hay red? → ¿hay autorización?) evita "arreglar" una capa superior mientras la inferior sigue rota, lo cual habría hecho parecer que la corrección no funcionaba.
 - **Tiempo estimado de resolución**: 40 minutos
+
+---
+
+### Incidente #007 – Race condition entre `app` y `db` en Docker Compose
+
+- **Fase**: v0.4 — Contenedores (Docker Compose)
+- **Categoría**: 🟢 Despliegue / 🟡 Configuración
+- **Síntoma**: Al levantar el stack desde cero (`docker compose up`, incluyendo un volumen recién creado), a veces la API responde `500`/`Connection refused` en `/db-check` justo después de arrancar, y a veces no — comportamiento intermitente.
+- **Diagnóstico**:
+  - Comandos usados: `docker compose down -v` (para forzar reinicialización completa de Postgres), `docker compose up --build` (sin `-d`, para ver logs en vivo intercalados de ambos servicios)
+  - Evidencia clave: en los logs, `app-1 | Uvicorn running on http://0.0.0.0:8000` apareció **antes** de que `db-1` completara su ciclo de inicialización (`database system is ready to accept connections` llegó varias líneas después). Un `curl` disparado en ese punto exacto habría fallado.
+- **Causa raíz**: `depends_on: - db` (forma simple) solo garantiza el **orden de arranque de los contenedores**, no espera a que la aplicación interna (Postgres) esté realmente lista para aceptar conexiones. La imagen oficial de Postgres, además, ejecuta un ciclo interno de init → shutdown → restart en su primer arranque, extendiendo la ventana de vulnerabilidad.
+- **Solución aplicada**:
+  - Cambio realizado: se agregó un `healthcheck` al servicio `db` usando `pg_isready`, y se cambió `depends_on` a la forma extendida con `condition: service_healthy` en `app`.
+  - Comando de verificación: `docker compose down -v && docker compose up --build` → en los logs, `Container devops-journey-db-1 Healthy` aparece antes de que `app-1` arranque; `curl -i http://localhost:8002/db-check` responde `200 OK` en el primer intento, sin importar el timing.
+- **Prevención**: cualquier servicio con dependencia de otro que tenga un arranque no instantáneo (bases de datos, colas de mensajes) debe usar `healthcheck` + `condition: service_healthy`, nunca confiar en `depends_on` simple para garantizar disponibilidad real.
+- **Aprendizaje clave**: `depends_on` ordena procesos, no garantiza disponibilidad de servicio. Es una distinción sutil pero crítica — el mismo tipo de error puede pasar desapercibido en desarrollo (por timing favorable, como ocurrió en la primera corrida) y aparecer de forma intermitente en producción bajo distinta carga o velocidad de hardware.
+- **Tiempo estimado de resolución**: 25 minutos
 
 ---
 
@@ -145,7 +165,6 @@ Este documento se actualiza al cierre de cada incidente relevante, en paralelo a
 Banco de incidentes a provocar en fases próximas — no son un calendario fijo, se resuelven en el orden natural en que la infraestructura los haga relevantes:
 
 - **Fase 4 (Docker, continuación):** OOMKill (límite de memoria), conflicto de puertos, tag de imagen incorrecto
-- **Fase 5 (PostgreSQL/Compose):** 502 por red interna de Docker Compose mal configurada, migración fallida (`relation already exists`), healthcheck mal calibrado
 - **Fase 6 (CI/CD):** build fallido por dependencia rota, deploy que no actualiza por uso de tag `latest`
 - **Fase 7 (AWS):** disco lleno en EC2, Security Group bloqueando tráfico, certificado TLS expirado, CPU throttling en instancia tipo burst
 
@@ -156,7 +175,7 @@ Banco de incidentes a provocar en fases próximas — no son un calendario fijo,
 | Categoría | Incidentes resueltos | Tiempo promedio |
 |---|---|---|
 | 🔴 Red | 4 | ~12 min |
-| 🟡 Configuración | 4 | ~19 min |
-| 🟢 Despliegue | 2 | ~12 min |
+| 🟡 Configuración | 5 | ~20 min |
+| 🟢 Despliegue | 3 | ~16 min |
 | 🔵 Seguridad | 1 | 40 min (compartido con Red/Config en #006) |
 | 🟣 Recursos | 0 | — |
