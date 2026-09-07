@@ -1,6 +1,7 @@
 services:
   db:
     image: postgres:16
+    restart: unless-stopped
     environment:
       POSTGRES_USER: devops_j
       POSTGRES_PASSWORD: clave
@@ -15,13 +16,22 @@ services:
 
   app:
     build: .
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://devops_j:clave@db:5432/devops_journey
-    ports:
-      - "8002:8000"
     depends_on:
       db:
         condition: service_healthy
+
+  nginx:
+    image: nginx:1.24-alpine
+    restart: unless-stopped
+    volumes:
+      - ./nginx/devops-journey.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8080:80"
+    depends_on:
+      - app
 
 volumes:
   pgdata:
