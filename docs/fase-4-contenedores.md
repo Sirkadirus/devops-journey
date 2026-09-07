@@ -91,13 +91,13 @@ services:
     image: postgres:16
     restart: unless-stopped
     environment:
-      POSTGRES_USER: devops_j
-      POSTGRES_PASSWORD: clave
-      POSTGRES_DB: devops_journey
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: database
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U devops_j -d devops_journey"]
+      test: ["CMD-SHELL", "pg_isready -U user -d database"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -106,7 +106,7 @@ services:
     build: .
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://devops_j:clave@db:5432/devops_journey
+      DATABASE_URL: postgresql://user:password@db:5432/database
     depends_on:
       db:
         condition: service_healthy
