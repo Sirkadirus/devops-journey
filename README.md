@@ -94,8 +94,8 @@ sudo nginx -t && sudo systemctl reload nginx
 
 **PostgreSQL** (rol y base dedicados, no usar el superusuario):
 ```sql
-CREATE USER devops_j WITH PASSWORD 'clave';
-CREATE DATABASE devops_journey OWNER devops_j;
+CREATE USER devops_j WITH PASSWORD 'password';
+CREATE DATABASE database_name OWNER user;
 ```
 
 ## Estructura del proyecto
