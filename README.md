@@ -3,7 +3,7 @@
 > Un laboratorio DevOps evolutivo: una única aplicación mínima que crece, capa por capa, desde `localhost` hasta un despliegue completo en AWS con CI/CD.
 
 [![Status](https://img.shields.io/badge/status-en%20progreso-yellow)]()
-[![Fase actual](https://img.shields.io/badge/fase-5%20Cloud%20(AWS)-blue)]()
+[![Fase actual](https://img.shields.io/badge/fase-6%20Kubernetes%20(b%C3%A1sico)-blue)]()
 
 ---
 
@@ -14,7 +14,9 @@ Este repositorio documenta mi preparación práctica para mi primera vacante com
 Cada fase agrega una capa nueva sobre la misma aplicación. Nada se reescribe desde cero. La evolución completa queda registrada en el historial de commits y en tags de versión.
 
 ```
-Cliente → Nginx → FastAPI → PostgreSQL, todo contenedorizado con Docker Compose → AWS → CI/CD
+Cliente → Internet Gateway → Security Group → EC2 → Nginx → FastAPI → PostgreSQL
+                                                         ↓
+                                                   IAM Role → S3 (backups)
 ```
 
 ## Por qué existe este proyecto
@@ -31,8 +33,13 @@ Cada incidente resuelto queda documentado en [`runbook.md`](./runbook.md) siguie
 | 2 — Linux Administration | Procesos, permisos, sistema de archivos, systemd/journalctl | ✅ Completa (`v0.2`) |
 | 3 — Servicios | Nginx (reverse proxy) + PostgreSQL (SQLAlchemy, `/db-check`) | ✅ Completa (`v0.3`) |
 | 4 — Contenedores | Docker, Docker Compose, Nginx dockerizado, restart policy | ✅ Completa (`v0.4.1`) |
-| 5 — Cloud | AWS (EC2, IAM, VPC, S3) | ⏳ En progreso |
-| 6 — Automatización | Git avanzado, GitHub Actions, CI/CD | 🔜 Pendiente |
+| 5 — Cloud (AWS) | IAM (Users/Roles/mínimo privilegio), VPC, Subnets, Route Tables, IGW, Security Groups, EC2, S3 | ✅ Completa (`v0.5`) |
+| 6 — Kubernetes (básico) | Pods, Deployments, Services, ConfigMaps, kubectl (clúster local con Kind) | ⏳ En progreso |
+| 7 — CI/CD | Git avanzado, GitHub Actions | 🔜 Pendiente |
+| 8 — Terraform | Infraestructura de la Fase 5 reproducida como código | 🔜 Pendiente |
+| 9 — Ansible | Configuración y provisioning de la instancia vía playbooks | 🔜 Pendiente |
+
+> Kubernetes básico se practica como módulo satélite (clúster local, no en AWS): no tiene dependencia técnica de Terraform/Ansible, y se priorizó antes por aparecer con frecuencia como filtro en entrevistas Junior. Una eventual migración a EKS queda como posible fase futura, una vez dominados Terraform y Ansible.
 
 Documentación detallada de cada fase en [`docs/`](./docs).
 
@@ -40,8 +47,8 @@ Documentación detallada de cada fase en [`docs/`](./docs).
 
 - **Aplicación:** Python 3 + FastAPI + Uvicorn + SQLAlchemy
 - **Base de datos:** PostgreSQL 16
-- **Infraestructura implementada:** systemd, Docker, Docker Compose (Nginx + API + PostgreSQL, los tres contenedorizados, con reinicio automático y healthcheck)
-- **Infraestructura pendiente:** AWS, GitHub Actions
+- **Infraestructura implementada:** systemd, Docker, Docker Compose (Nginx + API + PostgreSQL, los tres contenedorizados, con reinicio automático y healthcheck); AWS (EC2, VPC, Security Groups, IAM con Users/Roles diferenciados, S3 con acceso vía Instance Profile)
+- **Infraestructura pendiente:** Kubernetes (clúster local), Terraform, Ansible, GitHub Actions
 
 ## Cómo correrlo localmente
 
@@ -112,7 +119,8 @@ devops-journey/
 │   ├── fase-1-networking.md
 │   ├── fase-2-linux-administration.md
 │   ├── fase-3-servicios.md
-│   └── fase-4-contenedores.md
+│   ├── fase-4-contenedores.md
+│   └── fase-5-cloud-aws.md
 ├── Dockerfile                  # Imagen de la aplicación (build multi-capa optimizado)
 ├── .dockerignore
 ├── docker-compose.yml          # Orquesta nginx + app + db, con red, volumen, healthcheck y restart policy
@@ -138,6 +146,9 @@ Ver el listado completo en [`runbook.md`](./runbook.md). Algunos ejemplos:
 - **Conexión Docker → PostgreSQL con 3 causas encadenadas** — variable de entorno no inyectada, red aislada del contenedor, y autenticación de Postgres, diagnosticadas y resueltas una por una.
 - **Race condition en Docker Compose** — `depends_on` ordena arranque pero no garantiza disponibilidad; resuelto con `healthcheck` + `condition: service_healthy`.
 - **Bind mount montado como directorio fantasma** — Docker crea un directorio automáticamente cuando el archivo esperado no existe, produciendo un error de mount confuso en el intento siguiente.
+- **Security Group bloqueando tráfico (drop silencioso)** — a diferencia de un servicio caído (RST instantáneo) o un backend inalcanzable (502 instantáneo), un Security Group bloqueado no responde: el cliente falla recién al agotar su propio timeout.
+- **Subnet sin ruta al Internet Gateway** — una instancia con IP pública asignada resulta igualmente inalcanzable si la route table de su subnet no tiene ruta hacia el IGW; el estado "pública" depende de la ruta, no de la subnet en sí.
+- **401 en el Instance Metadata Service (IMDSv1 vs IMDSv2)** — una consulta de metadata con el flujo antiguo (GET directo) es rechazada por instancias modernas, que exigen primero un token vía PUT (mitigación de SSRF).
 
 ## Convenciones
 
@@ -147,4 +158,3 @@ Ver el listado completo en [`runbook.md`](./runbook.md). Algunos ejemplos:
 ---
 
 *Proyecto en construcción activa como parte de mi preparación para el mercado laboral DevOps.*
-
