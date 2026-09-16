@@ -231,3 +231,84 @@ Banco de incidentes a provocar en fases próximas — no son un calendario fijo,
 | 🟢 Despliegue | 3 | ~16 min |
 | 🔵 Seguridad | 2 | ~27 min |
 | 🟣 Recursos | 0 | — |
+
+## Incidente #011 — Security Group bloqueando tráfico HTTP (provocado)
+
+**Síntoma:**
+```
+curl: (28) Failed to connect to <IP> port 80 after 133780 ms: Couldn't connect to server
+```
+
+**Diagnóstico:**
+Se eliminó intencionalmente la regla de entrada del puerto 80 (HTTP) en el Security Group de la instancia EC2 para observar el comportamiento exacto de un bloqueo a nivel de firewall de AWS.
+
+A diferencia de un servicio caído (que responde con TCP RST de forma instantánea) o un backend inalcanzable detrás de un reverse proxy (HTTP 502 instantáneo), un bloqueo de Security Group produce un **timeout silencioso**: el paquete se descarta en el borde de red de AWS sin ninguna respuesta al cliente, que solo falla al agotar su propio timeout de conexión.
+
+**Root cause:**
+Ausencia de regla ALLOW para el puerto 80/TCP en el Security Group asociado a la instancia.
+
+**Solución:**
+Restaurar la regla de entrada: Type HTTP, Port 80, Source según corresponda (0.0.0.0/0 para acceso público).
+
+**Prevención:**
+- Documentar los Security Groups como código (futuro: Terraform) para evitar cambios manuales no versionados.
+- Ante un timeout (no un error HTTP), sospechar primero de capas de red (Security Group, NACL, route table) antes de revisar la aplicación.
+
+**Método de diagnóstico aplicado:**
+`curl` externo (timeout) contrastado con `ss -tlnp` interno (proceso en LISTEN confirmado) → aísla el problema en la capa de red de AWS, no en la instancia.
+
+---
+
+## Incidente #012 — Subnet sin ruta al Internet Gateway (provocado)
+
+**Síntoma:**
+Instancia EC2 lanzada en una subnet nueva, con IP pública asignada, completamente inalcanzable desde fuera — tanto `curl` como `ping` fallan por timeout, sin respuesta de ningún tipo.
+
+**Diagnóstico:**
+Se creó deliberadamente una subnet nueva (`172.31.32.0/20`) dentro de la misma VPC de producción, asociada a una route table que solo contenía la ruta local automática de la VPC (sin entrada `0.0.0.0/0 → igw-xxxxx`). Se lanzó una instancia de prueba en esa subnet con auto-asignación de IP pública habilitada.
+
+A pesar de tener IP pública asignada, la instancia resultó inalcanzable: sin la ruta hacia el Internet Gateway en la route table de la subnet, el tráfico externo no tiene forma de completar el camino de ida y vuelta hacia la instancia, independientemente de si esta tiene o no una IP pública asociada.
+
+Esto confirma que el estado "pública" de una subnet no es un atributo propio de la subnet, sino un efecto exclusivo de su route table.
+
+**Root cause:**
+Route table de la subnet sin entrada de ruta hacia el Internet Gateway (`0.0.0.0/0 → igw-xxxxx`).
+
+**Solución:**
+Se terminó (`terminate`) la instancia de prueba una vez confirmado el comportamiento. No se agregó la ruta, ya que la subnet fue creada exclusivamente para este ejercicio de diagnóstico, sin uso productivo.
+
+**Prevención:**
+- Al diseñar una arquitectura con subnets públicas y privadas, verificar explícitamente la route table de cada subnet, no asumir el estado por el nombre que se le haya dado.
+- Tener IP pública asignada no garantiza alcanzabilidad — son dos configuraciones independientes (IP pública a nivel de instancia, ruta a nivel de subnet).
+
+**Método de diagnóstico aplicado:**
+Comparación de comportamiento entre TCP (`curl`) e ICMP (`ping`) contra la misma instancia: ambos fallan por igual, porque el corte ocurre antes de llegar a la subnet (a nivel de VPC/routing), no a nivel de un firewall específico de protocolo o puerto (como sí ocurre con Security Groups).
+
+---
+
+## Incidente #013 — 401 Unauthorized al consultar el Instance Metadata Service (IMDSv1 vs IMDSv2)
+
+**Síntoma:**
+```
+curl -i http://169.254.169.254/latest/meta-data/iam/security-credentials/
+HTTP/1.1 401 Unauthorized
+```
+
+**Diagnóstico:**
+Al intentar verificar que el IAM Role `ec2-s3-backups-role` estaba correctamente asociado a la instancia, una consulta directa por `GET` al Instance Metadata Service (IMDSv1) devolvió `401 Unauthorized`. La instancia tiene configurado IMDSv2 (default en instancias modernas de EC2), que exige un paso previo de autenticación por token antes de permitir el acceso a los metadatos.
+
+**Root cause:**
+Uso del flujo de consulta de IMDSv1 (GET directo) contra una instancia configurada para requerir IMDSv2 (token vía PUT + GET con header).
+
+**Solución:**
+```bash
+TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+curl -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/iam/security-credentials/
+```
+Respuesta exitosa: `ec2-s3-backups-role`, confirmando la asociación correcta del Role.
+
+**Prevención:**
+- Al trabajar con el Instance Metadata Service en instancias EC2 modernas, asumir IMDSv2 por defecto y usar el flujo de token, no el GET directo heredado de IMDSv1.
+
+**Método de diagnóstico aplicado:**
+El `401` (no un timeout ni un error de conexión) indicó que el servicio estaba disponible y respondiendo, pero rechazando la forma de la solicitud — señal de un problema de autenticación/protocolo, no de red ni de permisos IAM del Role en sí.
