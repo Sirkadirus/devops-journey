@@ -312,3 +312,70 @@ Respuesta exitosa: `ec2-s3-backups-role`, confirmando la asociación correcta de
 
 **Método de diagnóstico aplicado:**
 El `401` (no un timeout ni un error de conexión) indicó que el servicio estaba disponible y respondiendo, pero rechazando la forma de la solicitud — señal de un problema de autenticación/protocolo, no de red ni de permisos IAM del Role en sí.
+
+## Incidente #014 — CrashLoopBackOff por variable de entorno ausente (Kubernetes)
+
+**Síntoma:**
+```
+kubectl get pods
+NAME                                  READY   STATUS   RESTARTS
+fastapi-deployment-5c8948d978-7fghp   0/1     Error    3
+fastapi-deployment-5c8948d978-smr9v   0/1     Error    3
+```
+`kubectl describe pod` muestra `State: Waiting — Reason: CrashLoopBackOff`, `Exit Code: 1`, `Environment: <none>`.
+
+**Diagnóstico:**
+El manifiesto inicial del Deployment no declaraba ninguna variable de entorno. `app/db.py` lee `DATABASE_URL` con `os.getenv("DATABASE_URL")` (sin default) y llama a `create_engine(DATABASE_URL)` **a nivel de módulo** — fuera de cualquier función. En Python, el código a nivel de módulo se ejecuta inmediatamente al hacer `import`, sin importar si los endpoints que usarían esa conexión están comentados en el archivo de la aplicación. Sin `DATABASE_URL`, `create_engine(None)` produce un error inmediato, y el contenedor termina con `Exit Code 1` apenas arranca — de ahí el `CrashLoopBackOff` (Kubernetes reintenta arrancarlo repetidamente, y vuelve a fallar cada vez).
+
+**Root cause:**
+Ausencia de la variable de entorno `DATABASE_URL` (ni como valor único ni como piezas sueltas) en el manifiesto del Deployment. A diferencia de Docker Compose, donde `.env` se inyecta automáticamente, en Kubernetes ninguna variable de entorno es implícita — todo tiene que declararse explícitamente en el manifiesto.
+
+**Solución:**
+Se creó un Secret (`DB_USER`, `DB_PASSWORD`) y un ConfigMap (`DB_HOST`, `DB_PORT`, `DB_NAME`), y se modificó `app/db.py` para armar `DATABASE_URL` a partir de esas piezas sueltas cuando la variable completa no está presente, manteniendo compatibilidad con Docker Compose (que sí la pasa completa).
+
+**Prevención:**
+- Al portar una aplicación de Docker Compose a Kubernetes, listar explícitamente todas las variables de entorno que el código espera antes de escribir el primer manifiesto de Deployment.
+- Un `Environment: <none>` en `describe pod`, combinado con `Exit Code: 1` inmediato, es señal fuerte de configuración faltante — revisar `kubectl logs` para el traceback exacto antes de asumir la causa.
+
+---
+
+## Incidente #015 — Fallo de resolución DNS de `host.docker.internal` desde un Pod en Kind (Linux)
+
+**Síntoma:**
+```
+curl http://localhost:30080/db-check
+{"detail":"database error: (psycopg2.OperationalError) could not translate host name \"host.docker.internal\" to address: Name or service not known..."}
+```
+
+**Diagnóstico:**
+El ConfigMap apuntaba a `host.docker.internal` como host de la base de datos, siguiendo el patrón habitual para que un contenedor alcance servicios publicados en el host. Ese hostname especial es resuelto automáticamente por Docker Desktop en Mac/Windows, pero su resolución dentro de contenedores anidados (un Pod de Kind, que corre dentro del contenedor del nodo de Kind, que a su vez corre sobre Docker en Linux) no es confiable — el error indica una falla de resolución DNS, no de credenciales ni de conexión rechazada.
+
+**Root cause:**
+`host.docker.internal` no resuelve de forma confiable dentro de la cadena de contenedores anidados de Kind sobre Docker en Linux.
+
+**Solución:**
+Se reemplazó el hostname por la IP real de la LAN del host (obtenida con `hostname -I`), apuntando al puerto explícitamente publicado por el contenedor de PostgreSQL (`5433`, mapeado al host vía `docker-compose.yml`). Se actualizó el ConfigMap y se forzó la recreación de los Pods con `kubectl rollout restart deployment`, ya que los Pods en ejecución no adoptan cambios de ConfigMap automáticamente.
+
+**Prevención:**
+- En entornos Kubernetes locales sobre Linux, preferir la IP real de red del host sobre `host.docker.internal` para alcanzar servicios expuestos fuera del clúster.
+- Confirmar siempre el puerto **publicado al host** (no el puerto interno del contenedor de destino) al conectar desde fuera de la red Docker de origen.
+
+---
+
+## Incidente #016 — Service NodePort inaccesible desde el host (configuración por defecto de Kind)
+
+**Síntoma:**
+`kubectl get services` mostraba el Service correctamente mapeado (`8000:30080/TCP`), pero `curl http://localhost:30080` fallaba (connection refused) desde el host.
+
+**Diagnóstico:**
+El clúster de Kind corre como un contenedor Docker. Por defecto, ese contenedor solo publica al host el puerto del API server de Kubernetes (visible en `kubectl cluster-info`) — no publica automáticamente el rango de puertos usado por Services tipo `NodePort`. `docker ps` sobre el contenedor del control-plane confirmó que únicamente el puerto del API server estaba mapeado.
+
+**Root cause:**
+Ausencia de mapeo de puerto (`extraPortMappings`) en la configuración de creación del clúster de Kind.
+
+**Solución:**
+Se recreó el clúster (`kind delete cluster` + `kind create cluster`) usando un archivo `kind-config.yaml` con `extraPortMappings` declarando explícitamente el puerto `30080` a publicar al host. Los manifiestos de Kubernetes (Secret, ConfigMap, Deployment, Service) se reaplicaron sin cambios, ya que viven versionados como código independientemente del clúster.
+
+**Prevención:**
+- Al planificar acceso externo a un Service `NodePort` en Kind, declarar `extraPortMappings` en la configuración del clúster **antes** de crearlo — no puede agregarse a un clúster ya existente.
+- Mantener los manifiestos de Kubernetes en archivos versionados (no solo aplicados ad-hoc) para que recrear un clúster sea una operación de segundos, no una pérdida de trabajo.
