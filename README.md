@@ -3,7 +3,7 @@
 > Un laboratorio DevOps evolutivo: una única aplicación mínima que crece, capa por capa, desde `localhost` hasta un despliegue completo en AWS con CI/CD.
 
 [![Status](https://img.shields.io/badge/status-en%20progreso-yellow)]()
-[![Fase actual](https://img.shields.io/badge/fase-6%20Kubernetes%20(b%C3%A1sico)-blue)]()
+[![Fase actual](https://img.shields.io/badge/fase-7%20CI%2FCD-blue)]()
 
 ---
 
@@ -19,11 +19,13 @@ Cliente → Internet Gateway → Security Group → EC2 → Nginx → FastAPI �
                                                    IAM Role → S3 (backups)
 ```
 
+> El mismo FastAPI también corre, en paralelo, como práctica satélite en un clúster de Kubernetes local (Fase 6) — ver `docs/fase-6-kubernetes-basico.md`.
+
 ## Por qué existe este proyecto
 
 La mayoría de los portafolios Junior muestran una tecnología aislada ("hice un contenedor Docker", "desplegué en AWS"). Este proyecto busca demostrar algo distinto: **la capacidad de operar y diagnosticar un sistema completo de punta a punta**, que es lo que realmente se evalúa en una entrevista y en el día a día del puesto.
 
-Cada incidente resuelto queda documentado en [`runbook.md`](./runbook.md) siguiendo un formato operativo estándar (síntoma → diagnóstico → causa raíz → solución → prevención), usando siempre herramientas reales de diagnóstico (`curl -v`, `ss`, `dig`, `ps`, `journalctl`, `nginx -t`, `psql`, `docker logs`, etc.), nunca simulado en abstracto.
+Cada incidente resuelto queda documentado en [`runbook.md`](./runbook.md) siguiendo un formato operativo estándar (síntoma → diagnóstico → causa raíz → solución → prevención), usando siempre herramientas reales de diagnóstico (`curl -v`, `ss`, `dig`, `ps`, `journalctl`, `nginx -t`, `psql`, `docker logs`, `kubectl describe/logs`, etc.), nunca simulado en abstracto.
 
 ## Roadmap y estado actual
 
@@ -34,12 +36,12 @@ Cada incidente resuelto queda documentado en [`runbook.md`](./runbook.md) siguie
 | 3 — Servicios | Nginx (reverse proxy) + PostgreSQL (SQLAlchemy, `/db-check`) | ✅ Completa (`v0.3`) |
 | 4 — Contenedores | Docker, Docker Compose, Nginx dockerizado, restart policy | ✅ Completa (`v0.4.1`) |
 | 5 — Cloud (AWS) | IAM (Users/Roles/mínimo privilegio), VPC, Subnets, Route Tables, IGW, Security Groups, EC2, S3 | ✅ Completa (`v0.5`) |
-| 6 — Kubernetes (básico) | Pods, Deployments, Services, ConfigMaps, kubectl (clúster local con Kind) | ⏳ En progreso |
-| 7 — CI/CD | Git avanzado, GitHub Actions | 🔜 Pendiente |
+| 6 — Kubernetes (básico) | Pod, Deployment, Service, ConfigMap, Secret (clúster local con Kind) | ✅ Completa (`v0.6`) |
+| 7 — CI/CD | Git avanzado, GitHub Actions | ⏳ En progreso |
 | 8 — Terraform | Infraestructura de la Fase 5 reproducida como código | 🔜 Pendiente |
 | 9 — Ansible | Configuración y provisioning de la instancia vía playbooks | 🔜 Pendiente |
 
-> Kubernetes básico se practica como módulo satélite (clúster local, no en AWS): no tiene dependencia técnica de Terraform/Ansible, y se priorizó antes por aparecer con frecuencia como filtro en entrevistas Junior. Una eventual migración a EKS queda como posible fase futura, una vez dominados Terraform y Ansible.
+> Kubernetes básico se practicó como módulo satélite (clúster local, no en AWS): no tiene dependencia técnica de Terraform/Ansible, y se priorizó antes por aparecer con frecuencia como filtro en entrevistas Junior. Una eventual migración a EKS queda como posible fase futura, una vez dominados Terraform y Ansible.
 
 Documentación detallada de cada fase en [`docs/`](./docs).
 
@@ -47,8 +49,8 @@ Documentación detallada de cada fase en [`docs/`](./docs).
 
 - **Aplicación:** Python 3 + FastAPI + Uvicorn + SQLAlchemy
 - **Base de datos:** PostgreSQL 16
-- **Infraestructura implementada:** systemd, Docker, Docker Compose (Nginx + API + PostgreSQL, los tres contenedorizados, con reinicio automático y healthcheck); AWS (EC2, VPC, Security Groups, IAM con Users/Roles diferenciados, S3 con acceso vía Instance Profile)
-- **Infraestructura pendiente:** Kubernetes (clúster local), Terraform, Ansible, GitHub Actions
+- **Infraestructura implementada:** systemd, Docker, Docker Compose (Nginx + API + PostgreSQL, los tres contenedorizados, con reinicio automático y healthcheck); AWS (EC2, VPC, Security Groups, IAM con Users/Roles diferenciados, S3 con acceso vía Instance Profile); Kubernetes local con Kind (Pod, Deployment, Service, ConfigMap, Secret)
+- **Infraestructura pendiente:** Terraform, Ansible, GitHub Actions
 
 ## Cómo correrlo localmente
 
@@ -67,6 +69,25 @@ Verificar:
 curl -i http://localhost:8080/health
 curl -i http://localhost:8080/db-check   # verifica conexión real Nginx → app → PostgreSQL
 ```
+
+### Alternativa: clúster local de Kubernetes (Kind)
+
+```bash
+kind create cluster --name devops-journey --config kind-config.yaml
+kind load docker-image devops-journey-app:latest --name devops-journey
+kubectl apply -f k8s/fastapi-secret.yaml
+kubectl apply -f k8s/fastapi-configmap.yaml
+kubectl apply -f k8s/fastapi-deployment.yaml
+kubectl apply -f k8s/fastapi-service.yaml
+```
+
+Verificar:
+```bash
+curl http://localhost:30080/health
+curl http://localhost:30080/db-check
+```
+
+Detalle completo, incluyendo por qué `app/db.py` soporta ambos entornos sin duplicar lógica, en [`docs/fase-6-kubernetes-basico.md`](./docs/fase-6-kubernetes-basico.md).
 
 ### Alternativa manual, directo sobre Linux (sin Docker)
 
@@ -105,7 +126,7 @@ devops-journey/
 ├── app/                        # Código de la aplicación FastAPI
 │   ├── __init__.py
 │   ├── main.py                 # Endpoints: /health, /db-check
-│   └── db.py                   # Engine y sesiones de SQLAlchemy
+│   └── db.py                   # Engine y sesiones de SQLAlchemy (compatible Compose + Kubernetes)
 ├── nginx/
 │   └── devops-journey.conf     # Config de Nginx usada DENTRO de Docker Compose (bind mount)
 ├── scripts/
@@ -115,12 +136,19 @@ devops-journey/
 │   │   └── devops-journey.service   # Copia de referencia del unit file real
 │   └── nginx/
 │       └── devops-journey.conf      # Config de Nginx para el modo MANUAL (fuera de Docker)
+├── k8s/                        # Manifiestos de Kubernetes (Fase 6)
+│   ├── fastapi-secret.yaml     # Credenciales de DB (Opaque, base64)
+│   ├── fastapi-configmap.yaml  # Configuración no sensible de DB
+│   ├── fastapi-deployment.yaml # Deployment, 2 réplicas
+│   └── fastapi-service.yaml    # Service tipo NodePort
+├── kind-config.yaml            # Configuración del clúster Kind (publica el NodePort al host)
 ├── docs/                       # Documentación técnica por fase (teoría + implementación + diagnóstico)
 │   ├── fase-1-networking.md
 │   ├── fase-2-linux-administration.md
 │   ├── fase-3-servicios.md
 │   ├── fase-4-contenedores.md
-│   └── fase-5-cloud-aws.md
+│   ├── fase-5-cloud-aws.md
+│   └── fase-6-kubernetes-basico.md
 ├── Dockerfile                  # Imagen de la aplicación (build multi-capa optimizado)
 ├── .dockerignore
 ├── docker-compose.yml          # Orquesta nginx + app + db, con red, volumen, healthcheck y restart policy
@@ -149,6 +177,9 @@ Ver el listado completo en [`runbook.md`](./runbook.md). Algunos ejemplos:
 - **Security Group bloqueando tráfico (drop silencioso)** — a diferencia de un servicio caído (RST instantáneo) o un backend inalcanzable (502 instantáneo), un Security Group bloqueado no responde: el cliente falla recién al agotar su propio timeout.
 - **Subnet sin ruta al Internet Gateway** — una instancia con IP pública asignada resulta igualmente inalcanzable si la route table de su subnet no tiene ruta hacia el IGW; el estado "pública" depende de la ruta, no de la subnet en sí.
 - **401 en el Instance Metadata Service (IMDSv1 vs IMDSv2)** — una consulta de metadata con el flujo antiguo (GET directo) es rechazada por instancias modernas, que exigen primero un token vía PUT (mitigación de SSRF).
+- **CrashLoopBackOff por variable de entorno ausente (Kubernetes)** — un `import` a nivel de módulo ejecuta `create_engine(DATABASE_URL)` de inmediato, aun con los endpoints que la usan comentados.
+- **Resolución DNS de `host.docker.internal` fallando en Kind sobre Linux** — resuelto apuntando a la IP real de la LAN del host contra el puerto explícitamente publicado.
+- **Service NodePort inaccesible por configuración por defecto de Kind** — resuelto declarando `extraPortMappings` en la configuración del clúster.
 
 ## Convenciones
 
