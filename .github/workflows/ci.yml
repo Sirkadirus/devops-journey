@@ -28,6 +28,12 @@ jobs:
         run: ruff check .
 
       - name: Run tests
+        env:
+          DB_USER: testuser
+          DB_PASSWORD: testpass
+          DB_HOST: localhost
+          DB_PORT: "5432"
+          DB_NAME: testdb
         run: pytest tests/ -v
 
       - name: Build Docker image
