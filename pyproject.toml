@@ -1,0 +1,5 @@
+[tool.ruff]
+extend-exclude = ["learning", "scripts/learning_python", "venv"]
+
+[tool.ruff.lint]
+ignore = ["B008", "BLE001"]

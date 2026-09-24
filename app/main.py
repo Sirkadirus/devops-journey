@@ -1,6 +1,7 @@
-from fastapi import FastAPI, Depends, HTTPException
-from sqlalchemy.orm import Session
+from fastapi import Depends, FastAPI, HTTPException
 from sqlalchemy import text
+from sqlalchemy.orm import Session
+
 from app.db import SessionLocal
 
 app = FastAPI()
@@ -25,4 +26,4 @@ def db_check(db: Session = Depends(get_db)):
         db.execute(text("SELECT 1"))
         return {"database": "connected"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"database error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"database error: {e!s}")
