@@ -379,3 +379,139 @@ Se recreó el clúster (`kind delete cluster` + `kind create cluster`) usando un
 **Prevención:**
 - Al planificar acceso externo a un Service `NodePort` en Kind, declarar `extraPortMappings` en la configuración del clúster **antes** de crearlo — no puede agregarse a un clúster ya existente.
 - Mantener los manifiestos de Kubernetes en archivos versionados (no solo aplicados ad-hoc) para que recrear un clúster sea una operación de segundos, no una pérdida de trabajo.
+
+
+## Incidente #017 — requirements.txt con dependencias concatenadas rompe pip en CI
+
+**Síntoma:**
+```
+ERROR: Invalid requirement: 'uvicorn==0.51.0httpx==0.28.1': Expected comma (within version specifier), semicolon (after version specifier) or end
+```
+
+**Diagnóstico:**
+El comando `pip freeze | grep -iE "pytest|httpx" >> requirements.txt`, usado para agregar dependencias nuevas, usó `>>` (append) sobre un archivo cuya última línea no terminaba en salto de línea. El contenido nuevo se concatenó al final de la última línea existente en vez de comenzar en una línea propia, dejando `uvicorn==0.51.0httpx==0.28.1` como un único string inválido.
+
+El problema no se manifestó en el entorno local porque `pip install -r requirements.txt` ya tenía esos paquetes instalados (no necesitó reinterpretar la línea rota). El runner de CI, al partir de un entorno limpio, sí necesitó parsear el archivo completo, y expuso el error inmediatamente.
+
+**Root cause:**
+Redirección `>>` sobre un archivo sin salto de línea final, concatenando dos nombres de paquete en una sola línea.
+
+**Solución:**
+Edición manual del archivo, separando la línea concatenada en dos líneas independientes. Verificado antes de pushear con `pip install -r requirements.txt --dry-run` y `cat -A requirements.txt` (para confirmar visualmente los saltos de línea).
+
+**Prevención:**
+- Verificar con `cat -A` o similar después de cualquier operación de `>>` sobre archivos de configuración, para confirmar que el salto de línea final existe antes de agregar contenido nuevo.
+- Correr instalaciones de dependencias con `--dry-run` tras una edición manual, antes de confiar en que "en local funciona".
+
+---
+
+## Incidente #018 — ValueError por "None" literal en DATABASE_URL durante la recolección de tests en CI
+
+**Síntoma:**
+```
+ERROR collecting tests/test_main.py
+...
+E   ValueError: invalid literal for int() with base 10: 'None'
+```
+
+**Diagnóstico:**
+El runner de CI no tiene ninguna variable de entorno de base de datos configurada. `app/db.py` arma `DATABASE_URL` a partir de variables sueltas (`DB_USER`, `DB_HOST`, `DB_PORT`, etc.) cuando la variable completa no existe, usando un f-string:
+```python
+DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+```
+Cuando esas variables sueltas tampoco existen, `os.getenv()` devuelve `None` — pero un f-string no deja eso "vacío": inserta el string literal `"None"`. La URL resultante queda con `"None"` como puerto, y SQLAlchemy falla al intentar convertirlo a entero (`int("None")`), antes incluso de que el test en sí llegue a ejecutarse (el error ocurre en la fase de "collection" de pytest, al importar el módulo).
+
+**Root cause:**
+Ausencia total de variables de entorno de base de datos en el runner de CI, combinada con la construcción de la URL vía f-string, que convierte `None` en el string `"None"` en vez de dejarlo vacío o fallar de forma más explícita.
+
+**Solución:**
+Se inyectaron variables de entorno dummy (pero sintácticamente válidas) al step de tests del workflow:
+```yaml
+env:
+  DB_USER: testuser
+  DB_PASSWORD: testpass
+  DB_HOST: localhost
+  DB_PORT: "5432"
+  DB_NAME: testdb
+```
+Como el test de `/health` no ejecuta ninguna query real, alcanza con que `create_engine()` pueda construirse sin error — no se necesita un Postgres real corriendo en el runner.
+
+**Prevención:**
+- Al portar una app a un entorno de CI, identificar explícitamente qué código se ejecuta solo con el `import` (no con la llamada a un endpoint específico), y asegurar que ese código no dependa de configuración ausente.
+- Preferir que una variable de entorno faltante falle de forma explícita (por ejemplo, validando con un mensaje claro) antes que se propague como un valor "mágico" como el string `"None"`.
+
+---
+
+## Incidente #019 — toLower() no existe en el lenguaje de expresiones de GitHub Actions
+
+**Síntoma:**
+```
+Invalid workflow file: .github/workflows/ci.yml#L91
+Unrecognized function: 'toLower'. Located at position 1 within expression: toLower(github.repository)
+```
+
+**Diagnóstico:**
+Se intentó usar `toLower()` para convertir `github.repository` a minúsculas (requisito de Docker/OCI para nombres de repositorio en tags), asumiendo que existía como función nativa del lenguaje de expresiones de GitHub Actions. GitHub Actions valida la sintaxis del workflow antes de ejecutarlo, y rechazó el archivo completo por la función inexistente — ningún job llegó a correr.
+
+**Root cause:**
+GitHub Actions no incluye una función de conversión a minúsculas en su set de funciones de expresión (`contains()`, `startsWith()`, `endsWith()`, `format()`, `join()`, `toJSON()`, `fromJSON()`, `hashFiles()` — ninguna cubre este caso).
+
+**Solución:**
+Se reemplazó por un step de shell explícito, usando `tr` (herramienta estándar de Linux, no específica de Actions), con el resultado expuesto como output del step para reutilizarlo en pasos posteriores:
+```yaml
+- name: Set lowercase repository owner
+  id: vars
+  run: echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+```
+
+**Prevención:**
+- Verificar la existencia de una función en la documentación oficial del lenguaje de expresiones de GitHub Actions antes de asumir que una función común en otros contextos (lenguajes de programación, otras plataformas de CI) está disponible.
+- Cuando el workflow lo requiera, resolver transformaciones de texto con comandos de shell estándar dentro de un step `run:`, en vez de depender de funciones de expresión inexistentes.
+
+---
+
+## Incidente #020 — Fix posterior a un merge no llegó a main (PR cerrado antes de tiempo)
+
+**Síntoma:**
+Un error ya corregido localmente (ver incidente #019) seguía reproduciéndose en los runs de `main`, a pesar de que el fix ya estaba commiteado y pusheado a la rama de origen del PR.
+
+**Diagnóstico:**
+El Pull Request se mergeó a `main` en un momento intermedio del trabajo, antes de que el commit con el fix definitivo llegara a esa misma rama. GitHub cierra y congela el estado de un PR al momento del merge — commits pusheados a la rama de origen *después* de ese momento no se incorporan a `main` automáticamente, incluso si la rama (y su PR ya cerrado) siguen existiendo. Se confirmó comparando `git log origin/main` contra `git log <rama>`: el commit del fix no aparecía en el historial de `main`.
+
+**Root cause:**
+Secuencia de operaciones: push del fix → merge del PR (sobre un estado anterior al fix, por una confusión de timing) → el fix quedó aislado en una rama cuyo PR ya estaba cerrado.
+
+**Solución:**
+```bash
+git checkout -b fix/ghcr-lowercase-tag
+git cherry-pick <hash-del-commit-con-el-fix>
+git push -u origin fix/ghcr-lowercase-tag
+```
+Se abrió un nuevo PR, mínimo (1 commit, 1 archivo), exclusivamente con el fix pendiente, que sí se mergeó correctamente a `main`.
+
+**Prevención:**
+- Antes de mergear un PR, confirmar explícitamente que el último commit pusheado a esa rama es el que se quiere llevar a `main` — especialmente si hubo varios intentos de fix en la misma sesión de trabajo.
+- `git cherry-pick` es la herramienta correcta para traer un commit puntual de una rama ya cerrada, sin arrastrar el resto de su historial.
+
+---
+
+## Incidente #021 — ssh: no key found al desplegar (GitHub Secret de clave SSH mal copiado)
+
+**Síntoma:**
+```
+ssh.ParsePrivateKey: ssh: no key found
+ssh: handshake failed: ssh: unable to authenticate, attempted methods [none], no supported methods remain
+```
+
+**Diagnóstico:**
+El job de deploy no pudo ni parsear el contenido del Secret `EC2_SSH_KEY` como una clave SSH válida — el fallo ocurrió antes del intento de conexión en sí. La causa más probable: al copiar el contenido de la clave privada desde la terminal (`cat ~/.ssh/gha-devops-journey`) hacia el campo de valor del Secret en GitHub, se perdió o alteró parte del contenido (típicamente las líneas `-----BEGIN...`/`-----END...`, o saltos de línea internos).
+
+**Root cause:**
+Contenido incompleto o corrupto en el GitHub Secret `EC2_SSH_KEY`, probablemente por una selección parcial del texto al copiar la clave privada completa.
+
+**Solución:**
+Se recreó el Secret desde cero, copiando el contenido completo del archivo de clave privada (incluyendo las líneas de `BEGIN`/`END`) sin recortes, y se volvió a disparar el workflow con un commit vacío (`git commit --allow-empty`) para forzar una nueva corrida sin necesidad de un cambio de código.
+
+**Prevención:**
+- Al cargar una clave privada u otro secreto multilínea en un Secret de CI, verificar localmente el número de líneas y el contenido de la primera/última línea (`head -1`, `tail -1`, `wc -l`) antes de copiar, para confirmar que el archivo fuente está completo.
+- Un error de "no se pudo parsear la clave" (a diferencia de un error de autenticación rechazada) apunta casi siempre a contenido corrupto o incompleto en el Secret, no a un problema de permisos en el servidor de destino.
