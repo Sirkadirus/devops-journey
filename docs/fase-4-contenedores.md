@@ -54,9 +54,9 @@ Se ordenó deliberadamente `COPY requirements.txt` + `RUN pip install` **antes**
 Se diagnosticaron y corrigieron dos errores de sintaxis reales durante la escritura del archivo: un typo de nombre de archivo (`requirement.txt` vs. el nombre real del proyecto, que resultó ser `requeriments.txt` — corregido a `requirements.txt` con `git mv`) y comillas mal balanceadas en la instrucción `CMD`.
 
 ### `.dockerignore`
-Excluye `venv/`, `__pycache__/`, `.env`, `.git/`, `docs/`, `runbook.md`, `learning/` — mismo principio de seguridad que `.gitignore` aplicado al contexto de build: nunca hornear secretos ni artefactos innecesarios dentro de una imagen.
+Excluye `venv/`, `__pycache__/`, `.env`, `.git/`, `docs/` (incluido el historial de incidentes), y `learning/` — mismo principio de seguridad que `.gitignore` aplicado al contexto de build: nunca hornear secretos ni artefactos innecesarios dentro de una imagen.
 
-### Incidente #006 (ver `runbook.md`)
+### Incidente #006 (ver `incidents/incident-history.md`)
 Al correr el primer contenedor con `docker run -p 8001:8000`, se encontraron y resolvieron tres causas encadenadas para lograr que el contenedor conectara a PostgreSQL (corriendo en el host, no en Docker todavía):
 1. `DATABASE_URL` llegaba como `None` — `.env` correctamente excluido de la imagen, pero no inyectado en runtime.
 2. `Connection refused` hacia `host.docker.internal` — Postgres solo escuchaba en `127.0.0.1`, invisible desde la red de Docker.
@@ -131,7 +131,7 @@ volumes:
 - **Volumen `pgdata`** gestionado por Compose (nombrado `devops-journey_pgdata`), persistiendo los datos de Postgres independientemente del ciclo de vida del contenedor `db`.
 - **`app` dejó de exponer `ports:` al host** una vez agregado `nginx`: Nginx pasó a ser la única puerta de entrada del stack, mismo principio de menor superficie expuesta ya aplicado a `db`.
 
-### Incidente #007 (ver `runbook.md`) — Race condition
+### Incidente #007 (ver `incidents/incident-history.md`) — Race condition
 Se detectó, leyendo logs de una corrida en primer plano (`docker compose up --build` sin `-d`), que `app` arrancaba (`Uvicorn running...`) **antes** de que `db` completara su inicialización interna de PostgreSQL. `depends_on` en su forma simple solo garantiza orden de arranque de contenedores, no disponibilidad real del servicio interno.
 
 **Fix:** se agregó `healthcheck` con `pg_isready` a `db`, y se cambió `depends_on` a la forma extendida `condition: service_healthy` en `app`. Verificado repitiendo la prueba desde cero (`docker compose down -v && docker compose up --build`): el log mostró `Container devops-journey-db-1 Healthy` antes de que `app` arrancara, y `curl` respondió `200 OK` en el primer intento sin depender del timing.
@@ -162,10 +162,10 @@ server {
 
 El contenedor usa la imagen oficial `nginx:1.24-alpine` sin necesidad de construir una imagen propia — la configuración se inyecta vía **bind mount** (`./nginx/devops-journey.conf:/etc/nginx/conf.d/default.conf:ro`), a diferencia del volumen nombrado usado para los datos de Postgres. Se estableció la distinción entre ambos tipos: bind mount para archivos de configuración versionados en Git y editados directamente por el desarrollador; volumen nombrado para datos generados en runtime por la propia aplicación.
 
-### Incidente #008 (ver `runbook.md`) — Bind mount montado como directorio fantasma
+### Incidente #008 (ver `incidents/incident-history.md`) — Bind mount montado como directorio fantasma
 El archivo de configuración se creó por error en la raíz del proyecto en lugar de dentro de `nginx/`. Docker, al no encontrar el archivo en la ruta esperada durante un intento previo, creó automáticamente un directorio vacío (propiedad de `root`) en su lugar — lo cual produjo un error de mount confuso (`not a directory`) en el intento siguiente. Diagnosticado con `ls -la`, comparando dueño y tipo de archivo entre la ruta esperada y la ruta real.
 
-### Incidente #009 (ver `runbook.md`) — 405 por confundir `curl -I` con `curl -i`
+### Incidente #009 (ver `incidents/incident-history.md`) — 405 por confundir `curl -I` con `curl -i`
 Durante la verificación final, `curl -I` (petición `HEAD`) devolvió `405 Method Not Allowed` en un endpoint sano, porque `/health` solo tiene handler para `GET`. El propio header `allow: GET` de la respuesta permitió descartar rápidamente un problema de infraestructura y aislar el error al comando usado, no al stack.
 
 ---

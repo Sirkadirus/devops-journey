@@ -4,5 +4,4 @@ __pycache__/
 .env
 .git/
 docs/
-runbook.md
 learning/

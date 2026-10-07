@@ -29,7 +29,7 @@ Incorporar Nginx como reverse proxy y PostgreSQL como base de datos, transforman
 ### Implementación
 Bloque `server` propio en `/etc/nginx/sites-available/devops-journey.conf`, enlazado a `sites-enabled/` (con el `default` removido para evitar ambigüedad), reenviando a `http://127.0.0.1:8000` con headers `Host`, `X-Real-IP`, `X-Forwarded-For` y `X-Forwarded-Proto`.
 
-### Diagnóstico — Incidente #005 (ver `runbook.md`)
+### Diagnóstico — Incidente #005 (ver `incidents/incident-history.md`)
 Se provocó un `502 Bad Gateway` deteniendo el servicio backend con Nginx activo. Se diagnosticó en capas: red del proxy sana (`nc -vz`, `ss -tlnp`) → error específico en `error.log` de Nginx (`connect() failed (111: Connection refused)` al upstream) → confirmación del backend caído (`ss -tlnp :8000` vacío, `systemctl status` inactive). Aprendizaje clave: el 502 siempre lo genera la capa proxy, nunca el backend.
 
 ---

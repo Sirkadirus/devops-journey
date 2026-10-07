@@ -151,7 +151,7 @@ deploy:
 
 ## 4. Incidentes de esta fase
 
-Ver detalle completo en `runbook.md`. Resumen:
+Ver detalle completo en `incidents/incident-history.md`. Resumen:
 
 - **#017** — `requirements.txt` con dos paquetes concatenados en una sola línea (`>>` sin salto de línea final previo), rompiendo el parseo de `pip` en un runner limpio.
 - **#018** — `ValueError: invalid literal for int() with base 10: 'None'` en la recolección de tests: `DATABASE_URL` armada con la palabra literal `"None"` cuando las variables de entorno no existen en el runner.

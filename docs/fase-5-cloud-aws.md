@@ -202,7 +202,7 @@ Configuración:
 
 ## Incidentes de esta fase
 
-Ver detalle completo en `runbook.md`. Resumen:
+Ver detalle completo en `incidents/incident-history.md`. Resumen:
 
 - **#011** — Security Group sin regla para el puerto 80 → timeout de 133s por drop silencioso, contrastado con RST (servicio caído) y 502 (backend caído).
 - **#012** — Subnet sin ruta al Internet Gateway → instancia con IP pública asignada, igualmente inalcanzable. Confirma que "pública" depende de la route table, no de la subnet en sí.

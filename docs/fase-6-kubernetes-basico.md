@@ -97,7 +97,7 @@ Esto no se puede agregar a un clúster ya existente — requiere recrearlo. Como
 
 ## 4. Incidentes de esta fase
 
-Ver detalle completo en `runbook.md`. Resumen:
+Ver detalle completo en `incidents/incident-history.md`. Resumen:
 
 - **#014** — `CrashLoopBackOff` por variable de entorno ausente: un `import` a nivel de módulo ejecuta `create_engine(DATABASE_URL)` inmediatamente, incluso con los endpoints que la usan comentados.
 - **#015** — Fallo de resolución DNS de `host.docker.internal` desde dentro de un Pod en Kind sobre Linux; resuelto apuntando a la IP real de la LAN del host contra el puerto explícitamente publicado por Docker.

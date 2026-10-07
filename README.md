@@ -33,7 +33,7 @@ Cliente → Internet Gateway → Security Group → EC2 → Nginx → FastAPI �
 
 La mayoría de los portafolios Junior muestran una tecnología aislada ("hice un contenedor Docker", "desplegué en AWS"). Este proyecto busca demostrar algo distinto: **la capacidad de operar y diagnosticar un sistema completo de punta a punta**, que es lo que realmente se evalúa en una entrevista y en el día a día del puesto.
 
-Cada incidente resuelto queda documentado en [`runbook.md`](./runbook.md) siguiendo un formato operativo estándar (síntoma → diagnóstico → causa raíz → solución → prevención), usando siempre herramientas reales de diagnóstico (`curl -v`, `ss`, `dig`, `ps`, `journalctl`, `nginx -t`, `psql`, `docker logs`, `kubectl describe/logs`, GitHub Actions logs, etc.), nunca simulado en abstracto.
+El historial de incidentes está preservado en [`docs/incidents/incident-history.md`](./docs/incidents/incident-history.md). El registro individual de Connection Refused está en [`docs/incidents/001-connection-refused.md`](./docs/incidents/001-connection-refused.md). Todavía no hay un runbook separado con procedimientos reutilizables.
 
 ## Roadmap y estado actual
 
@@ -51,7 +51,7 @@ Cada incidente resuelto queda documentado en [`runbook.md`](./runbook.md) siguie
 
 > Kubernetes básico se practicó como módulo satélite (clúster local, no en AWS): no tiene dependencia técnica de Terraform/Ansible, y se priorizó antes por aparecer con frecuencia como filtro en entrevistas Junior. Una eventual migración a EKS queda como posible fase futura, una vez dominados Terraform y Ansible.
 
-Documentación detallada de cada fase en [`docs/`](./docs).
+Índice de arquitectura, operación, incidentes y fases en [`docs/README.md`](./docs/README.md).
 
 ## Stack
 
@@ -181,19 +181,24 @@ devops-journey/
 ├── .github/
 │   └── workflows/
 │       └── ci.yml               # Pipeline: lint, test, build, publish (GHCR), deploy (EC2)
-├── docs/                       # Documentación técnica por fase (teoría + implementación + diagnóstico)
+├── docs/                       # Arquitectura, operación, incidentes y fases
+│   ├── README.md
+│   ├── architecture/overview.md
+│   ├── incidents/
+│   │   ├── 001-connection-refused.md
+│   │   └── incident-history.md
 │   ├── fase-1-networking.md
 │   ├── fase-2-linux-administration.md
 │   ├── fase-3-servicios.md
 │   ├── fase-4-contenedores.md
 │   ├── fase-5-cloud-aws.md
 │   ├── fase-6-kubernetes-basico.md
-│   └── fase-7-cicd.md
+│   ├── fase-7-cicd.md
+│   └── fase-8-terraform.md
 ├── Dockerfile                  # Imagen de la aplicación (build multi-capa optimizado)
 ├── .dockerignore
 ├── docker-compose.yml          # Orquesta nginx + app + db, con red, volumen, healthcheck y restart policy
 ├── pyproject.toml              # Configuración de ruff (lint + format)
-├── runbook.md                  # Incidentes resueltos en formato operativo estándar
 ├── .env.example                 # Plantilla de variables de entorno (sin secretos)
 ├── requirements.txt
 └── README.md
@@ -207,7 +212,7 @@ Cada módulo del roadmap sigue el mismo formato: teoría mínima → implementac
 
 ## Incidentes resueltos (destacados)
 
-Ver el listado completo en [`runbook.md`](./runbook.md). Algunos ejemplos:
+Ver el historial completo en [`docs/incidents/incident-history.md`](./docs/incidents/incident-history.md). Algunos ejemplos:
 
 - **Connection Refused** — diagnóstico de la diferencia entre rechazo activo del kernel (RST) y timeout de red real.
 - **Bind a `127.0.0.1` en lugar de `0.0.0.0`** — causa raíz más común de fallos de conectividad al introducir un reverse proxy o contenedores.
