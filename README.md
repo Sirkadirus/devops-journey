@@ -46,7 +46,7 @@ El historial de incidentes está preservado en [`docs/incidents/incident-history
 | 5 — Cloud (AWS) | IAM (Users/Roles/mínimo privilegio), VPC, Subnets, Route Tables, IGW, Security Groups, EC2, S3 | ✅ Completa (`v0.5`) |
 | 6 — Kubernetes (básico) | Pod, Deployment, Service, ConfigMap, Secret (clúster local con Kind) | ✅ Completa (`v0.6`) |
 | 7 — CI/CD | GitHub Actions (lint, tests, build), GHCR, despliegue automático a EC2 por SSH | ✅ Completa (`v0.7`) |
-| 8 — Terraform | Infraestructura de la Fase 5 reproducida como código | ⏳ En progreso |
+| 8 — Terraform | Introducción a Infrastructure as Code con Terraform para AWS, actualmente centrada en EC2 + Security Group | ⏳ En progreso |
 | 9 — Ansible | Configuración y provisioning de la instancia vía playbooks | 🔜 Pendiente |
 
 > Kubernetes básico se practicó como módulo satélite (clúster local, no en AWS): no tiene dependencia técnica de Terraform/Ansible, y se priorizó antes por aparecer con frecuencia como filtro en entrevistas Junior. Una eventual migración a EKS queda como posible fase futura, una vez dominados Terraform y Ansible.
