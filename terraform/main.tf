@@ -14,6 +14,7 @@ provider "aws" {
 resource "aws_security_group" "terraform_demo_sg" {
   name        = "terraform-demo-sg"
   description = "SG de practica para Fase 8 - Terraform"
+  vpc_id      = aws_vpc.main.id
 
   ingress {
     description = "SSH desde mi IP"
@@ -47,6 +48,7 @@ resource "aws_security_group" "terraform_demo_sg" {
 resource "aws_instance" "terraform_demo" {
   ami                    = var.ami_id
   instance_type          = var.instance_type
+  subnet_id              = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.terraform_demo_sg.id]
   key_name               = var.key_pair_name
 

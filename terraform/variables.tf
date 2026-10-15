@@ -24,3 +24,21 @@ variable "my_ip" {
   description = "Tu IP publica, en formato CIDR, para la regla SSH"
   type        = string
 }
+
+variable "vpc_cidr" {
+  description = "CIDR de la VPC"
+  type        = string
+  default     = "10.0.0.0/16"
+}
+
+variable "public_subnet_cidr" {
+  description = "CIDR de la subnet publica"
+  type        = string
+  default     = "10.0.1.0/24"
+}
+
+variable "availability_zone" {
+  description = "AZ de la subnet"
+  type        = string
+  default     = "sa-east-1b"
+}
