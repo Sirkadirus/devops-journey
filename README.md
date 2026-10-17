@@ -3,7 +3,7 @@
 > Un laboratorio DevOps evolutivo: una única aplicación mínima que crece, capa por capa, desde `localhost` hasta un despliegue completo en AWS con CI/CD.
 
 [![Status](https://img.shields.io/badge/status-en%20progreso-yellow)]()
-[![Fase actual](https://img.shields.io/badge/fase-8%20Terraform-blue)]()
+[![Fase actual](https://img.shields.io/badge/fase-9%20Monitoreo-blue)]()
 
 ---
 
@@ -33,7 +33,7 @@ Cliente → Internet Gateway → Security Group → EC2 → Nginx → FastAPI �
 
 La mayoría de los portafolios Junior muestran una tecnología aislada ("hice un contenedor Docker", "desplegué en AWS"). Este proyecto busca demostrar algo distinto: **la capacidad de operar y diagnosticar un sistema completo de punta a punta**, que es lo que realmente se evalúa en una entrevista y en el día a día del puesto.
 
-El historial de incidentes está preservado en [`docs/incidents/incident-history.md`](./docs/incidents/incident-history.md). El registro individual de Connection Refused está en [`docs/incidents/001-connection-refused.md`](./docs/incidents/001-connection-refused.md). Todavía no hay un runbook separado con procedimientos reutilizables.
+Cada incidente resuelto queda documentado en [`runbook.md`](./runbook.md) siguiendo un formato operativo estándar (síntoma → diagnóstico → causa raíz → solución → prevención), usando siempre herramientas reales de diagnóstico (`curl -v`, `ss`, `dig`, `ps`, `journalctl`, `nginx -t`, `psql`, `docker logs`, `kubectl describe/logs`, GitHub Actions logs, etc.), nunca simulado en abstracto.
 
 ## Roadmap y estado actual
 
@@ -46,19 +46,22 @@ El historial de incidentes está preservado en [`docs/incidents/incident-history
 | 5 — Cloud (AWS) | IAM (Users/Roles/mínimo privilegio), VPC, Subnets, Route Tables, IGW, Security Groups, EC2, S3 | ✅ Completa (`v0.5`) |
 | 6 — Kubernetes (básico) | Pod, Deployment, Service, ConfigMap, Secret (clúster local con Kind) | ✅ Completa (`v0.6`) |
 | 7 — CI/CD | GitHub Actions (lint, tests, build), GHCR, despliegue automático a EC2 por SSH | ✅ Completa (`v0.7`) |
-| 8 — Terraform | Introducción a Infrastructure as Code con Terraform para AWS, actualmente centrada en EC2 + Security Group | ⏳ En progreso |
-| 9 — Ansible | Configuración y provisioning de la instancia vía playbooks | 🔜 Pendiente |
+| 8 — Terraform | Fase 5 reproducida como código: VPC, subnet, IGW, route table, Security Group, EC2, IAM Role + Instance Profile y S3 | ✅ Completa (`v0.8`) |
+| 9 — Monitoreo y observabilidad | Métricas (Prometheus), dashboards (Grafana), logs y alertas sobre el stack | ⏳ Siguiente |
+| 10 — Ansible | Configuración de la instancia (Docker, agentes de monitoreo, despliegue de la app) con playbooks | 🔜 Pendiente |
+| 11 — Repaso integrador | Revisión de todo el recorrido (Fases 1–10) | 🔜 Pendiente |
+| 12 — EKS | Desplegar el proyecto con Kubernetes en AWS (opcional, según el mercado) | 🔜 Pendiente |
 
-> Kubernetes básico se practicó como módulo satélite (clúster local, no en AWS): no tiene dependencia técnica de Terraform/Ansible, y se priorizó antes por aparecer con frecuencia como filtro en entrevistas Junior. Una eventual migración a EKS queda como posible fase futura, una vez dominados Terraform y Ansible.
+> Kubernetes básico se practicó como módulo satélite (clúster local con Kind): no tiene dependencia técnica de Terraform ni de Ansible, y se priorizó antes por aparecer con frecuencia como filtro en entrevistas Junior. EKS queda para el final, después del repaso integrador. La Fase 8 se construyó en paralelo a producción, sin importar la infraestructura real al state de Terraform.
 
-Índice de arquitectura, operación, incidentes y fases en [`docs/README.md`](./docs/README.md).
+Documentación detallada de cada fase en [`docs/`](./docs).
 
 ## Stack
 
 - **Aplicación:** Python 3 + FastAPI + Uvicorn + SQLAlchemy
 - **Base de datos:** PostgreSQL 16
-- **Infraestructura implementada:** systemd, Docker, Docker Compose (Nginx + API + PostgreSQL, los tres contenedorizados, con reinicio automático y healthcheck); AWS (EC2, VPC, Security Groups, IAM con Users/Roles diferenciados, S3 con acceso vía Instance Profile); Kubernetes local con Kind (Pod, Deployment, Service, ConfigMap, Secret); CI/CD con GitHub Actions (lint con ruff, tests con pytest, build y publicación en GHCR, despliegue automático a EC2 por SSH)
-- **Infraestructura pendiente:** Terraform, Ansible
+- **Infraestructura implementada:** systemd, Docker, Docker Compose (Nginx + API + PostgreSQL, los tres contenedorizados, con reinicio automático y healthcheck); AWS (EC2, VPC, Security Groups, IAM con Users/Roles diferenciados, S3 con acceso vía Instance Profile); Kubernetes local con Kind (Pod, Deployment, Service, ConfigMap, Secret); CI/CD con GitHub Actions (lint con ruff, tests con pytest, build y publicación en GHCR, despliegue automático a EC2 por SSH); Terraform (VPC, subnet, IGW, route table, Security Group, EC2, IAM Role + Instance Profile y S3, en paralelo a producción); agentes de IA con control de permisos (Codex)
+- **Infraestructura pendiente:** monitoreo y observabilidad, Ansible, EKS
 
 ## Cómo correrlo localmente
 
@@ -178,15 +181,19 @@ devops-journey/
 │   ├── fastapi-deployment.yaml # Deployment, 2 réplicas
 │   └── fastapi-service.yaml    # Service tipo NodePort
 ├── kind-config.yaml            # Configuración del clúster Kind (publica el NodePort al host)
+├── terraform/                  # Infraestructura como código (Fase 8)
+│   ├── main.tf                 # Provider, Security Group, EC2
+│   ├── network.tf              # VPC, subnet, IGW, route table y asociación
+│   ├── iam.tf                  # Role, policy e Instance Profile
+│   ├── s3.tf                   # Bucket con versioning y Block Public Access
+│   ├── variables.tf
+│   ├── outputs.tf
+│   └── .terraform.lock.hcl     # Versión fijada del provider
+├── AGENTS.md                   # Reglas de trabajo para agentes de IA
 ├── .github/
 │   └── workflows/
 │       └── ci.yml               # Pipeline: lint, test, build, publish (GHCR), deploy (EC2)
-├── docs/                       # Arquitectura, operación, incidentes y fases
-│   ├── README.md
-│   ├── architecture/overview.md
-│   ├── incidents/
-│   │   ├── 001-connection-refused.md
-│   │   └── incident-history.md
+├── docs/                       # Documentación técnica por fase (teoría + implementación + diagnóstico)
 │   ├── fase-1-networking.md
 │   ├── fase-2-linux-administration.md
 │   ├── fase-3-servicios.md
@@ -194,11 +201,13 @@ devops-journey/
 │   ├── fase-5-cloud-aws.md
 │   ├── fase-6-kubernetes-basico.md
 │   ├── fase-7-cicd.md
-│   └── fase-8-terraform.md
+│   ├── fase-8-terraform.md
+│   └── agent-journey.md
 ├── Dockerfile                  # Imagen de la aplicación (build multi-capa optimizado)
 ├── .dockerignore
 ├── docker-compose.yml          # Orquesta nginx + app + db, con red, volumen, healthcheck y restart policy
 ├── pyproject.toml              # Configuración de ruff (lint + format)
+├── runbook.md                  # Incidentes resueltos en formato operativo estándar
 ├── .env.example                 # Plantilla de variables de entorno (sin secretos)
 ├── requirements.txt
 └── README.md
@@ -208,11 +217,23 @@ devops-journey/
 
 ## Metodología
 
-Cada módulo del roadmap sigue el mismo formato: teoría mínima → implementación → diagnóstico → incidente simulado → documentación. El detalle completo está en `docs/`.
+Cada módulo del roadmap sigue el mismo formato: teoría mínima → implementación → diagnóstico → incidente provocado → documentación. El detalle completo está en `docs/`.
+
+## Agentes de IA en el flujo de trabajo
+
+Este proyecto también es un laboratorio para trabajar con agentes de IA sin perder comprensión técnica. El principio: **el agente es un multiplicador de capacidades, no un sustituto del conocimiento técnico.**
+
+- **Codex CLI en modo "Ask for approval":** puede trabajar dentro del repositorio, pero las operaciones de mayor riesgo requieren aprobación. `terraform apply`, `terraform destroy` y las operaciones destructivas de Git se ejecutan solo bajo control humano.
+- **`AGENTS.md`:** define cómo debe trabajar el agente en este repo (inspeccionar antes de actuar, trabajar con hipótesis y evidencia, no inventar resultados, proteger credenciales, hacer cambios pequeños y verificarlos).
+- **Separación de roles:** el asistente conversacional se usa para estudiar, diseñar y razonar; Codex, para inspeccionar el repositorio, detectar inconsistencias y verificar cambios.
+- **Auditorías de solo lectura:** una auditoría READ-ONLY de Terraform mostró que el repositorio cubría menos de lo que el README sugería (Security Group + EC2, sin red ni IAM). Se corrigió la documentación y se amplió el alcance de la fase: *la documentación debe describir el estado real del sistema, no el deseado.*
+- **Git con staging selectivo:** nada de `git add .`. Cada commit se revisa y se verifica que no entren `.env`, `terraform.tfvars`, `.terraform/` ni ningún state.
+
+Detalle completo en [`docs/agent-journey.md`](./docs/agent-journey.md).
 
 ## Incidentes resueltos (destacados)
 
-Ver el historial completo en [`docs/incidents/incident-history.md`](./docs/incidents/incident-history.md). Algunos ejemplos:
+Ver el listado completo en [`runbook.md`](./runbook.md). Algunos ejemplos:
 
 - **Connection Refused** — diagnóstico de la diferencia entre rechazo activo del kernel (RST) y timeout de red real.
 - **Bind a `127.0.0.1` en lugar de `0.0.0.0`** — causa raíz más común de fallos de conectividad al introducir un reverse proxy o contenedores.
@@ -231,12 +252,16 @@ Ver el historial completo en [`docs/incidents/incident-history.md`](./docs/incid
 - **`toLower()` inexistente en GitHub Actions** — resuelto con un step de shell (`tr`) para normalizar nombres de tag de Docker a minúsculas.
 - **Fix perdido tras un merge prematuro** — un commit pusheado después del merge de su PR no llega a `main`; resuelto con `git cherry-pick` hacia una rama nueva.
 - **Secret de clave SSH mal copiado** — `ssh: no key found` por contenido incompleto en el GitHub Secret; resuelto recreándolo con el archivo completo.
+- **Repositorio apt rechazado por `NO_PUBKEY` (instalación de Terraform)** — apt se niega a usar un repositorio cuya firma no puede verificar; el problema era la clave GPG, no el control de seguridad.
+- **SSH bloqueado al cambiar la IP del ISP (Security Group gestionado por Terraform)** — la corrección va en el código (`terraform.tfvars` + `apply`, `update in-place`), no en la consola, para evitar drift.
+- **Sesión de `aws login` vencida e identidad equivocada al aplicar IAM y S3** — las credenciales temporales de administrador vencen solas; se confirma la identidad con `get-caller-identity` antes de cada `apply`.
 
 ## Convenciones
 
 - **Commits:** [Conventional Commits](https://www.conventionalcommits.org/) (`feat`, `fix`, `docs`, `chore`, `refactor`, `ci`, `test`)
 - **Versionado:** tags `v0.1` → `v1.0`, uno por fase estable
 - **Ramas:** Pull Requests hacia `main` (sin push directo), desde que `main` dispara despliegues reales en Fase 7
+- **Terraform:** `terraform.tfvars`, `*.tfstate` y `.terraform/` no se versionan; `.terraform.lock.hcl` sí. Todo recurso de laboratorio lleva el tag `Project = devops-journey-fase8`.
 
 ---
 
