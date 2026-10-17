@@ -515,3 +515,76 @@ Se recreó el Secret desde cero, copiando el contenido completo del archivo de c
 **Prevención:**
 - Al cargar una clave privada u otro secreto multilínea en un Secret de CI, verificar localmente el número de líneas y el contenido de la primera/última línea (`head -1`, `tail -1`, `wc -l`) antes de copiar, para confirmar que el archivo fuente está completo.
 - Un error de "no se pudo parsear la clave" (a diferencia de un error de autenticación rechazada) apunta casi siempre a contenido corrupto o incompleto en el Secret, no a un problema de permisos en el servidor de destino.
+
+Incidente #022 — apt rechaza el repositorio de HashiCorp (NO_PUBKEY) al instalar Terraform
+
+Síntoma:
+
+W: GPG error: https://apt.releases.hashicorp.com noble InRelease: The following signatures couldn't be verified because the public key is not available: NO_PUBKEY FC9CA96ACA026560
+E: The repository 'https://apt.releases.hashicorp.com noble InRelease' is not signed.
+N: Updating from such a repository can't be done securely, and is therefore disabled by default.
+
+Diagnóstico: apt verifica que los paquetes de cada repositorio estén firmados con una clave conocida. El repositorio de HashiCorp se agregó a sources.list.d, pero la clave pública que debía validarlo no estaba disponible en /usr/share/keyrings/. Al no poder verificar la firma, apt deshabilitó el repositorio en vez de instalar paquetes sin garantía de origen. El error apareció en apt update, antes de llegar a instalar nada.
+
+Root cause (probable): El primer paso de la instalación (wget -O - ... | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg) no dejó la clave correctamente importada. No se verificó el estado del archivo antes de repetir el paso, así que la causa exacta de esa falla (descarga incompleta, wget ausente u otra) no quedó confirmada.
+
+Solución: Se repitió la importación de la clave con curl, que falla de forma visible si algo sale mal, y se volvió a actualizar:
+
+bash
+curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+sudo apt update && sudo apt install terraform -y
+terraform version
+
+Resultado: Terraform v1.16.4.
+
+Prevención:
+
+Dentro de una tubería (a | b), un fallo del primer comando puede quedar oculto. Confirmar que el archivo de la clave existe y no está vacío (ls -la /usr/share/keyrings/hashicorp-archive-keyring.gpg) antes de seguir con apt update.
+Ante un NO_PUBKEY, no desactivar la verificación de firmas: el problema es la clave, no el control de seguridad de apt.
+Incidente #023 — La IP pública del operador cambió y la regla SSH del Security Group quedó desactualizada
+
+Síntoma: La IP pública del operador pasó de 181.2.101.162 a 190.139.172.211, mientras la regla SSH del Security Group (/32) seguía apuntando a la anterior. Si no se corrige, el SSH al servidor da timeout, el mismo patrón del incidente #011.
+
+Diagnóstico: La regla SSH se declaró con cidr_blocks = [var.my_ip], y el valor viene de terraform.tfvars. Una IP residencial dinámica puede cambiar entre sesiones, y la regla /32 solo admite exactamente una dirección. Cambiar la regla a mano en la consola habría generado drift (diferencia entre el código y la infraestructura real), y el siguiente plan habría propuesto revertir ese cambio manual.
+
+Root cause: IP pública dinámica combinada con una regla de acceso fijada a una única dirección (/32).
+
+Solución: Se corrigió el código, no la consola: se actualizó my_ip en terraform.tfvars y se aplicó. El plan fue exactamente el esperado:
+
+~ update in-place  →  aws_security_group.terraform_demo_sg
+Plan: 0 to add, 1 to change, 0 to destroy.
+
+El Security Group conservó su id y la instancia no apareció en el plan (no se reinició). Un posterior terraform plan devolvió No changes. Your infrastructure matches the configuration.
+
+Prevención:
+
+Antes de cada plan o apply, comparar la IP actual (curl -s ifconfig.me) con el valor de my_ip en terraform.tfvars.
+Modificar siempre el código y no la consola para cambios sobre recursos administrados por Terraform; así el código sigue siendo la fuente de verdad y no aparece drift.
+Un -/+ (destruir y recrear) en el plan de este cambio habría sido señal para frenar: implicaría un nuevo ID de Security Group.
+Incidente #024 — Sesión temporal de aws login vencida (y credenciales de la identidad equivocada en la terminal)
+
+Síntoma:
+
+aws: [ERROR]: Your session has expired. Please reauthenticate using 'aws login'.
+
+Además, aws sts get-caller-identity mostraba user/j-devops cuando el paso requería user/devops-admin.
+
+Diagnóstico: Para crear un Role de IAM y un bucket S3 hace falta una identidad con permisos de IAM y S3, que j-devops (mínimo privilegio) no tiene. Se usaron credenciales temporales de devops-admin: aws login guarda una sesión que expira, y aws configure export-credentials la convierte en variables de entorno (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN) que existen solo en la terminal donde se ejecutó el eval. Pasaron dos días entre el plan y el apply: la terminal ya no tenía esas variables y la sesión había vencido. Cuando export-credentials falla, el eval recibe un texto vacío y no muestra ningún error propio; por eso se verificó la identidad con un comando aparte.
+
+Root cause: Credenciales temporales vencidas, más variables de entorno acotadas a una terminal que ya no las tenía.
+
+Solución:
+
+bash
+aws login --profile devops-admin
+eval "$(aws configure export-credentials --profile devops-admin --format env)"
+aws sts get-caller-identity    # debe terminar en user/devops-admin
+
+Con esa identidad, el apply creó los 13 recursos: Apply complete! Resources: 13 added, 0 changed, 0 destroyed.
+
+Prevención:
+
+Confirmar siempre la identidad activa con aws sts get-caller-identity antes de un plan o apply que dependa de permisos de administrador.
+Las credenciales exportadas son una copia con vencimiento corto: aplicar apenas se cargan y repetir el eval si Terraform responde ExpiredToken. El destroy también las necesita.
+Al terminar, soltarlas con unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN o cerrar la terminal; evita dejar permisos de administrador en una sesión de uso diario.
+Preferir credenciales temporales y acotadas a una terminal antes que access keys permanentes de administrador en el portátil.
