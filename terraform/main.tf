@@ -51,6 +51,7 @@ resource "aws_instance" "terraform_demo" {
   subnet_id              = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.terraform_demo_sg.id]
   key_name               = var.key_pair_name
+  iam_instance_profile   = aws_iam_instance_profile.ec2_s3_backups.name
 
   tags = {
     Name    = "terraform-demo"

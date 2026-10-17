@@ -42,3 +42,9 @@ variable "availability_zone" {
   type        = string
   default     = "sa-east-1b"
 }
+
+variable "backups_bucket_name" {
+  description = "Nombre del bucket S3 de backups (unico a nivel global en AWS)"
+  type        = string
+  default     = "devops-journey-backups-tf-kadirus01"
+}
