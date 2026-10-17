@@ -8,3 +8,7 @@ terraform/.terraform/
 terraform/*.tfstate
 terraform/*.tfstate.*
 terraform/terraform.tfvars
+
+# Terraform state en cualquier ruta
+*.tfstate
+*.tfstate.*
